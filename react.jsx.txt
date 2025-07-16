@@ -1,0 +1,1272 @@
+import React, { useState, useEffect, createContext, useContext, useCallback, useRef, useMemo } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, doc, getDoc, setDoc, updateDoc, onSnapshot, collection, query, addDoc, deleteDoc, serverTimestamp, getDocs } from 'firebase/firestore';
+import { getStorage, ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage'; // Import Firebase Storage functions
+
+// --- Firebase Context ---
+const FirebaseContext = createContext(null);
+
+const FirebaseProvider = ({ children }) => {
+  const [app, setApp] = useState(null);
+  const [db, setDb] = useState(null);
+  const [auth, setAuth] = useState(null);
+  const [storage, setStorage] = useState(null); // Add storage state
+  const [userId, setUserId] = useState(null);
+  const [isAuthReady, setIsAuthReady] = useState(false);
+
+  useEffect(() => {
+    // Initialize Firebase
+    const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+    const initializedApp = initializeApp(firebaseConfig);
+    const initializedDb = getFirestore(initializedApp);
+    const initializedAuth = getAuth(initializedApp);
+    const initializedStorage = getStorage(initializedApp); // Initialize Storage
+
+    setApp(initializedApp);
+    setDb(initializedDb);
+    setAuth(initializedAuth);
+    setStorage(initializedStorage); // Set storage instance
+
+    // Sign in and set up auth state listener
+    const unsubscribe = onAuthStateChanged(initializedAuth, async (user) => {
+      if (user) {
+        setUserId(user.uid);
+      } else {
+        // Sign in anonymously if no initial token or user
+        try {
+          if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+            await signInWithCustomToken(initializedAuth, __initial_auth_token);
+          } else {
+            await signInAnonymously(initializedAuth);
+          }
+        } catch (error) {
+          console.error("Error signing in:", error);
+          // Fallback to a random ID if anonymous sign-in also fails
+          setUserId(crypto.randomUUID());
+        }
+      }
+      setIsAuthReady(true);
+    });
+
+    return () => unsubscribe(); // Cleanup auth listener
+  }, []);
+
+  return (
+    <FirebaseContext.Provider value={{ app, db, auth, storage, userId, isAuthReady }}>
+      {children}
+    </FirebaseContext.Provider>
+  );
+};
+
+// --- Theme Context ---
+const ThemeContext = createContext(null);
+
+const ThemeProvider = ({ children }) => {
+  const [theme, setTheme] = useState(() => {
+    // Initialize theme from local storage or default to 'light'
+    return localStorage.getItem('circle-theme') || 'light';
+  });
+
+  useEffect(() => {
+    // Apply theme to the document body
+    const root = document.documentElement;
+    if (theme === 'dark') {
+      root.classList.add('dark');
+    } else {
+      root.classList.remove('dark');
+    }
+    localStorage.setItem('circle-theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme((prevTheme) => (prevTheme === 'light' ? 'dark' : 'light'));
+  };
+
+  return (
+    <ThemeContext.Provider value={{ theme, toggleTheme }}>
+      {children}
+    </ThemeContext.Provider>
+  );
+};
+
+// --- Modals ---
+const Modal = ({ isOpen, onClose, title, children }) => {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md p-6 relative transform transition-all duration-300 scale-100 opacity-100">
+        <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-4 border-b pb-2">
+          {title}
+        </h3>
+        <button
+          onClick={onClose}
+          className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 text-2xl"
+        >
+          &times;
+        </button>
+        {children}
+      </div>
+    </div>
+  );
+};
+
+// --- Components ---
+
+// Ad Banner Component
+const AdBanner = () => {
+  const [showContact, setShowContact] = useState(false);
+
+  const handleClick = () => {
+    setShowContact(true);
+  };
+
+  const handleCloseContact = () => {
+    setShowContact(false);
+  };
+
+  return (
+    <>
+      <div
+        className="w-full bg-gradient-to-r from-blue-500 to-purple-600 text-white text-center py-2 rounded-b-lg shadow-md mb-4 cursor-pointer"
+        onClick={handleClick}
+      >
+        <p className="text-sm font-semibold">Publish your add here <span className="underline">Learn More &rarr;</span></p>
+      </div>
+
+      {showContact && (
+        <Modal isOpen={showContact} onClose={handleCloseContact} title="Contact for Ads">
+          <p className="text-gray-700 dark:text-gray-300 text-center text-lg">
+            Contact us: arianrashid93@gmail.com, or, rashidarian38@gmail.com
+          </p>
+        </Modal>
+      )}
+    </>
+  );
+};
+
+// Welcome Screen Component
+const WelcomeScreen = ({ onAgree }) => {
+  return (
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-white p-4">
+      <div className="bg-white dark:bg-gray-800 p-8 rounded-xl shadow-2xl max-w-md text-center">
+        <h1 className="text-3xl font-bold mb-6 text-blue-600 dark:text-blue-400">Welcome to Circle!</h1>
+        <p className="text-lg mb-8 leading-relaxed">
+          You can communicate with others using this app in a limited distance. Please don’t use this app for any bad/Haram purposes. This is a small request from Circle.
+        </p>
+        <p className="font-semibold text-gray-700 dark:text-gray-300 mb-8">
+          - Chairman of Circle
+        </p>
+        <button
+          onClick={onAgree}
+          className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-full shadow-lg transition duration-300 ease-in-out transform hover:scale-105"
+        >
+          Agree
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// Helper function to resize and compress image (for profile pics)
+const resizeImage = (file, maxWidth, maxHeight, quality) => {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target.result;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+
+        // Calculate new dimensions while maintaining aspect ratio
+        if (width > height) {
+          if (width > maxWidth) {
+            height *= maxWidth / width;
+            width = maxWidth;
+          }
+        } else {
+          if (height > maxHeight) {
+            width *= maxHeight / height;
+            height = maxHeight;
+          }
+        }
+        canvas.width = width;
+        canvas.height = height;
+
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+
+        // Convert canvas to base64 image with specified quality
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+    };
+    reader.onerror = (error) => {
+      console.error("Error reading file:", error);
+      resolve(null);
+    };
+  });
+};
+
+
+// Auth and Profile Setup Screen
+const AuthProfileSetup = ({ onProfileComplete }) => {
+  const { db, userId, isAuthReady } = useContext(FirebaseContext);
+  const [displayName, setDisplayName] = useState('');
+  const [profilePicUrl, setProfilePicUrl] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+  useEffect(() => {
+    const fetchUserProfile = async () => {
+      if (!isAuthReady || !userId || !db) return;
+
+      setLoading(true);
+      setError('');
+      try {
+        const userProfileRef = doc(db, `artifacts/${appId}/users/${userId}/profiles`, userId);
+        const docSnap = await getDoc(userProfileRef);
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          setDisplayName(data.displayName || '');
+          setProfilePicUrl(data.profilePicUrl || '');
+          if (data.displayName && data.profilePicUrl) {
+            onProfileComplete(); // If profile exists and is complete, proceed
+          }
+        }
+      } catch (err) {
+        console.error("Error fetching user profile:", err);
+        setError("Failed to load profile. Please try again.");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchUserProfile();
+  }, [userId, isAuthReady, db, onProfileComplete, appId]);
+
+  const handleProfilePicChange = async (e) => { // Made async
+    const file = e.target.files[0];
+    if (file) {
+      // Resize and compress the image before setting it
+      const resizedBase64 = await resizeImage(file, 128, 128, 0.7); // Target 128x128, 70% quality
+      if (resizedBase64) {
+        setProfilePicUrl(resizedBase64);
+      } else {
+        setError("Failed to process image. Please try another file.");
+      }
+    }
+  };
+
+  const saveProfile = async () => {
+    if (!displayName.trim() || !profilePicUrl) {
+      setError("Display Name and Profile Picture are mandatory.");
+      return;
+    }
+    if (!db || !userId) {
+      setError("Authentication not ready. Please wait.");
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    try {
+      const userProfileRef = doc(db, `artifacts/${appId}/users/${userId}/profiles`, userId);
+      await setDoc(userProfileRef, {
+        displayName: displayName.trim(),
+        profilePicUrl: profilePicUrl,
+        lastUpdated: serverTimestamp(),
+        userId: userId, // Store userId in the profile document
+      }, { merge: true });
+      onProfileComplete();
+    } catch (err) {
+      console.error("Error saving profile:", err);
+      setError("Failed to save profile. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!isAuthReady || loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-white">
+        <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-blue-500"></div>
+        <p className="ml-4 text-lg">Loading user data...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-white p-4">
+      <div className="bg-white dark:bg-gray-800 p-8 rounded-xl shadow-2xl w-full max-w-md text-center">
+        <h2 className="text-2xl font-bold mb-6 text-blue-600 dark:text-blue-400">Setup Your Profile</h2>
+        {error && <p className="text-red-500 mb-4">{error}</p>}
+        <div className="mb-6">
+          <label htmlFor="profilePic" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            Profile Picture (Mandatory)
+          </label>
+          <div className="flex flex-col items-center justify-center mb-4">
+            <img
+              src={profilePicUrl || `https://placehold.co/128x128/a0aec0/ffffff?text=Upload`}
+              alt="Profile Preview"
+              className="w-32 h-32 rounded-full object-cover border-4 border-blue-400 dark:border-blue-600 shadow-md"
+            />
+            <input
+              type="file"
+              id="profilePic"
+              accept="image/*"
+              onChange={handleProfilePicChange}
+              className="mt-4 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+            />
+          </div>
+        </div>
+        <div className="mb-6 text-left">
+          <label htmlFor="displayName" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            Display Name
+          </label>
+          <input
+            type="text"
+            id="displayName"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-blue-500 focus:border-blue-500"
+            placeholder="Enter your display name"
+          />
+        </div>
+        <button
+          onClick={saveProfile}
+          className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-full shadow-lg transition duration-300 ease-in-out transform hover:scale-105"
+          disabled={loading}
+        >
+          {loading ? 'Saving...' : 'Save Profile'}
+        </button>
+        <p className="text-sm text-gray-500 dark:text-gray-400 mt-4">Your User ID: <span className="font-mono break-all">{userId}</span></p>
+      </div>
+    </div>
+  );
+};
+
+// Room Members Modal
+const RoomMembersModal = ({ isOpen, onClose, members }) => {
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title="Room Members">
+      {members.length === 0 ? (
+        <p className="text-gray-500 dark:text-gray-400">No members found in this room (based on message history).</p>
+      ) : (
+        <div className="max-h-80 overflow-y-auto custom-scrollbar">
+          {members.map((member) => (
+            <div key={member.id} className="flex items-center p-2 mb-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition duration-150">
+              <img
+                src={member.profilePicUrl || `https://placehold.co/40x40/a0aec0/ffffff?text=U`}
+                alt={member.displayName}
+                className="w-10 h-10 rounded-full object-cover mr-3 border-2 border-gray-300 dark:border-gray-600"
+              />
+              <p className="font-semibold text-gray-900 dark:text-white">{member.displayName}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </Modal>
+  );
+};
+
+// File Upload Progress Modal
+const FileUploadProgressModal = ({ isOpen, onClose, progress, fileName, error }) => {
+  if (!isOpen) return null;
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title="File Upload">
+      {error ? (
+        <div className="text-red-500 text-center">
+          <p className="font-semibold mb-2">Upload Failed!</p>
+          <p>{error}</p>
+        </div>
+      ) : (
+        <div className="text-center">
+          <p className="mb-2 text-gray-700 dark:text-gray-300">Uploading: <span className="font-semibold">{fileName}</span></p>
+          <div className="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700">
+            <div
+              className="bg-blue-600 h-2.5 rounded-full"
+              style={{ width: `${progress}%` }}
+            ></div>
+          </div>
+          <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">{progress}%</p>
+        </div>
+      )}
+    </Modal>
+  );
+};
+
+
+// Main Application Layout
+const MainApp = () => {
+  const { db, userId, isAuthReady, storage } = useContext(FirebaseContext); // Get storage from context
+  const { theme, toggleTheme } = useContext(ThemeContext);
+
+  const [userProfile, setUserProfile] = useState(null);
+  const [activeRoomId, setActiveRoomId] = useState(null);
+  const [allPublicRooms, setAllPublicRooms] = useState([]); // All rooms available publicly
+  const [userJoinedRooms, setUserJoinedRooms] = useState([]); // Rooms specifically joined by this user
+  const [messages, setMessages] = useState([]);
+  const [newMessage, setNewMessage] = useState('');
+  const [isRoomModalOpen, setIsRoomModalOpen] = useState(false);
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [isOffline, setIsOffline] = useState(false);
+  const [isOutOfRange, setIsOutOfRange] = useState(false);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isMembersModalOpen, setIsMembersModalOpen] = useState(false);
+
+  // File upload states
+  const [isFileUploadModalOpen, setIsFileUploadModalOpen] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadFileName, setUploadFileName] = useState('');
+  const [uploadError, setUploadError] = useState('');
+
+  const messagesEndRef = useRef(null);
+  const menuRef = useRef(null);
+  const fileInputRef = useRef(null); // Ref for the hidden file input
+  const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+  // Close menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (menuRef.current && !menuRef.current.contains(event.target)) {
+        setIsMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
+
+  // Fetch user profile
+  useEffect(() => {
+    if (!isAuthReady || !userId || !db) return;
+
+    const userProfileRef = doc(db, `artifacts/${appId}/users/${userId}/profiles`, userId);
+    const unsubscribe = onSnapshot(userProfileRef, (docSnap) => {
+      if (docSnap.exists()) {
+        setUserProfile(docSnap.data());
+      } else {
+        setUserProfile(null); // Profile might not be set up yet
+      }
+    }, (error) => {
+      console.error("Error fetching user profile snapshot:", error);
+    });
+
+    return () => unsubscribe();
+  }, [userId, isAuthReady, db, appId]);
+
+  // Fetch all public rooms (for create/join modal)
+  useEffect(() => {
+    if (!isAuthReady || !db) return;
+    const q = collection(db, `artifacts/${appId}/public/data/rooms`);
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const rooms = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setAllPublicRooms(rooms);
+    }, (error) => {
+      console.error("Error fetching all public rooms snapshot:", error);
+    });
+    return () => unsubscribe();
+  }, [isAuthReady, db, appId]);
+
+  // Fetch user's joined rooms
+  useEffect(() => {
+    if (!isAuthReady || !userId || !db) return;
+
+    const userJoinedRoomsRef = collection(db, `artifacts/${appId}/users/${userId}/profiles/${userId}/joinedRooms`);
+    const unsubscribe = onSnapshot(userJoinedRoomsRef, (snapshot) => {
+      const rooms = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setUserJoinedRooms(rooms);
+      // If no active room, set the first one from user's joined rooms
+      if (!activeRoomId && rooms.length > 0) {
+        setActiveRoomId(rooms[0].id);
+      }
+    }, (error) => {
+      console.error("Error fetching user's joined rooms snapshot:", error);
+    });
+
+    return () => unsubscribe();
+  }, [userId, isAuthReady, db, activeRoomId, appId]);
+
+
+  // Fetch messages for active room
+  useEffect(() => {
+    if (!activeRoomId || !db) {
+      setMessages([]); // Clear messages if no room selected
+      return;
+    }
+
+    const messagesRef = collection(db, `artifacts/${appId}/public/data/rooms/${activeRoomId}/messages`);
+    const q = query(messagesRef); // No orderBy to avoid index issues as per instructions
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const msgs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      // Sort messages by timestamp client-side
+      msgs.sort((a, b) => (a.timestamp?.toDate() || 0) - (b.timestamp?.toDate() || 0));
+      setMessages(msgs);
+    }, (error) => {
+      console.error("Error fetching messages snapshot:", error);
+    });
+
+    return () => unsubscribe();
+  }, [activeRoomId, db, appId]);
+
+  // Scroll to bottom of messages
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  // Derive room members from messages
+  const roomMembers = useMemo(() => {
+    const membersMap = new Map();
+    messages.forEach(msg => {
+      if (!membersMap.has(msg.senderId)) {
+        membersMap.set(msg.senderId, {
+          id: msg.senderId,
+          displayName: msg.senderDisplayName,
+          profilePicUrl: msg.senderProfilePicUrl,
+        });
+      }
+    });
+    return Array.from(membersMap.values());
+  }, [messages]);
+
+
+  const handleSendMessage = async (e) => {
+    e.preventDefault();
+    if (!newMessage.trim() || !activeRoomId || !db || !userId || !userProfile) return;
+    if (isOffline && isOutOfRange) {
+      // Message won't be sent if offline and out of range
+      return;
+    }
+
+    try {
+      const messagesRef = collection(db, `artifacts/${appId}/public/data/rooms/${activeRoomId}/messages`);
+      await addDoc(messagesRef, {
+        text: newMessage.trim(),
+        senderId: userId,
+        senderDisplayName: userProfile.displayName,
+        senderProfilePicUrl: userProfile.profilePicUrl,
+        timestamp: serverTimestamp(),
+        type: 'text', // Indicate message type
+      });
+      setNewMessage('');
+    } catch (error) {
+      console.error("Error sending message:", error);
+      // Using custom modal for alerts
+      setUploadError("Failed to send message. Please try again.");
+      setIsFileUploadModalOpen(true);
+    }
+  };
+
+  const handleFileChange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (!activeRoomId || !db || !userId || !userProfile || !storage) {
+      setUploadError("App not ready for file upload. Please wait.");
+      setIsFileUploadModalOpen(true);
+      return;
+    }
+    if (isOffline && isOutOfRange) {
+      setUploadError("Cannot send files when offline and out of range.");
+      setIsFileUploadModalOpen(true);
+      return;
+    }
+
+    setUploadFileName(file.name);
+    setUploadProgress(0);
+    setUploadError('');
+    setIsFileUploadModalOpen(true); // Open modal to show progress
+
+    const storageRef = ref(storage, `artifacts/${appId}/public/data/room_files/${activeRoomId}/${userId}/${file.name}_${Date.now()}`);
+    const uploadTask = uploadBytesResumable(storageRef, file);
+
+    uploadTask.on('state_changed',
+      (snapshot) => {
+        const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+        setUploadProgress(progress);
+      },
+      (error) => {
+        console.error("File upload error:", error);
+        setUploadError(`Upload failed: ${error.message}`);
+      },
+      async () => {
+        try {
+          const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+          const messagesRef = collection(db, `artifacts/${appId}/public/data/rooms/${activeRoomId}/messages`);
+          await addDoc(messagesRef, {
+            text: `Sent a file: ${file.name}`, // A message indicating a file was sent
+            senderId: userId,
+            senderDisplayName: userProfile.displayName,
+            senderProfilePicUrl: userProfile.profilePicUrl,
+            timestamp: serverTimestamp(),
+            type: 'file', // Indicate message type is file
+            fileUrl: downloadURL,
+            fileName: file.name,
+            fileType: file.type,
+            fileSize: file.size,
+          });
+          setUploadProgress(100); // Ensure it shows 100% on success
+          setTimeout(() => setIsFileUploadModalOpen(false), 1000); // Close after a short delay
+        } catch (error) {
+          console.error("Error getting download URL or sending file message:", error);
+          setUploadError(`Failed to finalize file send: ${error.message}`);
+        }
+      }
+    );
+  };
+
+  const handleFileButtonClick = () => {
+    fileInputRef.current.click(); // Trigger the hidden file input click
+  };
+
+
+  const handleCreateJoinRoom = async (roomData) => {
+    if (!db || !userId) return;
+
+    try {
+      const roomsRef = collection(db, `artifacts/${appId}/public/data/rooms`);
+      // Check if room number already exists among all public rooms
+      const existingRoom = allPublicRooms.find(d => d.roomNumber === roomData.roomNumber);
+
+      let targetRoomId;
+      let roomNameForAlert = roomData.roomName;
+
+      if (existingRoom) {
+        // Assume joining if room number matches
+        if (existingRoom.roomPassword === roomData.roomPassword) {
+          targetRoomId = existingRoom.id;
+          roomNameForAlert = existingRoom.roomName;
+          // Using custom modal for alerts
+          setUploadError(`Joined existing room: ${roomNameForAlert}`);
+          setIsFileUploadModalOpen(true);
+        } else {
+          setUploadError("Incorrect room password.");
+          setIsFileUploadModalOpen(true);
+          return;
+        }
+      } else {
+        // Create new room
+        const newRoomRef = await addDoc(roomsRef, {
+          roomNumber: roomData.roomNumber,
+          roomName: roomData.roomName,
+          roomPassword: roomData.roomPassword, // In a real app, hash this!
+          groupName: roomData.groupName,
+          creatorId: userId,
+          createdAt: serverTimestamp(),
+        });
+        targetRoomId = newRoomRef.id;
+        setUploadError(`Created and joined new room: ${roomNameForAlert}`);
+        setIsFileUploadModalOpen(true);
+      }
+
+      // Add/Update room in user's joined rooms subcollection
+      const userJoinedRoomDocRef = doc(db, `artifacts/${appId}/users/${userId}/profiles/${userId}/joinedRooms`, targetRoomId);
+      await setDoc(userJoinedRoomDocRef, {
+        roomId: targetRoomId,
+        roomName: roomNameForAlert,
+        roomNumber: roomData.roomNumber,
+        groupName: roomData.groupName,
+        lastAccessed: serverTimestamp(),
+      }, { merge: true });
+
+      setActiveRoomId(targetRoomId);
+      setIsRoomModalOpen(false);
+    } catch (error) {
+      console.error("Error creating/joining room:", error);
+      setUploadError("Failed to create/join room. Please try again.");
+      setIsFileUploadModalOpen(true);
+    }
+  };
+
+  const handleLeaveRoom = async (roomIdToLeave) => {
+    if (!db || !userId) return;
+
+    try {
+      const userJoinedRoomDocRef = doc(db, `artifacts/${appId}/users/${userId}/profiles/${userId}/joinedRooms`, roomIdToLeave);
+      await deleteDoc(userJoinedRoomDocRef);
+
+      // If the user is currently in the room they are leaving, switch to another or null
+      if (activeRoomId === roomIdToLeave) {
+        const remainingRooms = userJoinedRooms.filter(room => room.id !== roomIdToLeave);
+        setActiveRoomId(remainingRooms.length > 0 ? remainingRooms[0].id : null);
+      }
+      setUploadError(`Left room successfully.`);
+      setIsFileUploadModalOpen(true);
+    }
+    catch (error) {
+      console.error("Error leaving room:", error);
+      setUploadError("Failed to leave room. Please try again.");
+      setIsFileUploadModalOpen(true);
+    }
+  };
+
+  const handleUpdateProfile = async (updatedProfile) => {
+    if (!db || !userId) return;
+    try {
+      const userProfileRef = doc(db, `artifacts/${appId}/users/${userId}/profiles`, userId);
+      await updateDoc(userProfileRef, updatedProfile);
+      setUploadError("Profile updated successfully!");
+      setIsFileUploadModalOpen(true);
+      setIsProfileModalOpen(false);
+    } catch (error) {
+      console.error("Error updating profile:", error);
+      setUploadError("Failed to update profile. Please try again.");
+      setIsFileUploadModalOpen(true);
+    }
+  };
+
+  const toggleOfflineStatus = () => {
+    setIsOffline(prev => !prev);
+    setIsOutOfRange(false); // Reset out of range when toggling offline status
+  };
+
+  const toggleOutOfRange = () => {
+    setIsOutOfRange(prev => !prev);
+  };
+
+  if (!userProfile) {
+    // This case should ideally be handled by AuthProfileSetup redirecting
+    // but as a fallback, show loading or redirect to profile setup
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-white">
+        <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-blue-500"></div>
+        <p className="ml-4 text-lg">Loading user profile...</p>
+      </div>
+    );
+  }
+
+  const currentRoom = allPublicRooms.find(room => room.id === activeRoomId);
+
+  return (
+    <div className="flex flex-col h-screen bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-white">
+      <AdBanner />
+
+      {/* Main Content Area */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Left Sidebar - Rooms */}
+        <div className="w-1/4 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 p-4 flex flex-col shadow-lg rounded-tr-xl rounded-br-xl">
+          <h2 className="text-xl font-bold mb-4 text-blue-600 dark:text-blue-400">Rooms</h2>
+          <button
+            onClick={() => setIsRoomModalOpen(true)}
+            className="bg-green-500 hover:bg-green-600 text-white py-2 px-4 rounded-lg mb-4 shadow-md transition duration-200 ease-in-out transform hover:scale-105"
+          >
+            Create / Join Room
+          </button>
+
+          {/* Your Joined Rooms Section */}
+          <h3 className="text-lg font-bold mt-4 mb-2 text-blue-600 dark:text-blue-400">Your Joined Rooms</h3>
+          <div className="flex-1 overflow-y-auto custom-scrollbar mb-4">
+            {userJoinedRooms.length === 0 ? (
+              <p className="text-gray-500 dark:text-gray-400">No rooms saved yet.</p>
+            ) : (
+              <ul>
+                {userJoinedRooms.map((room) => (
+                  <li
+                    key={room.id}
+                    className={`flex justify-between items-center p-3 rounded-lg cursor-pointer mb-2 transition duration-200 ease-in-out
+                      ${activeRoomId === room.id
+                        ? 'bg-blue-100 dark:bg-blue-700 text-blue-800 dark:text-white font-semibold shadow-inner'
+                        : 'hover:bg-gray-100 dark:hover:bg-gray-700'
+                      }`}
+                  >
+                    <span onClick={() => setActiveRoomId(room.id)} className="flex-1">
+                      {room.roomName}
+                    </span>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handleLeaveRoom(room.id); }}
+                      className="text-red-500 hover:text-red-700 ml-2 p-1 rounded-full hover:bg-red-100 dark:hover:bg-red-800 transition duration-150"
+                      title="Leave Room"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 011-1h4a1 1 0 110 2H8a1 1 0 01-1-1zm1 3a1 1 0 000 2h4a1 1 0 100-2H8z" clipRule="evenodd" />
+                      </svg>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+
+          {/* Profile Section */}
+          <div className="mt-auto pt-4 border-t border-gray-200 dark:border-gray-700">
+            <h3 className="text-lg font-bold mb-2 text-blue-600 dark:text-blue-400">Your Profile</h3>
+            <div className="flex items-center space-x-3 mb-4">
+              <img
+                src={userProfile.profilePicUrl || `https://placehold.co/48x48/a0aec0/ffffff?text=User`}
+                alt="Profile"
+                className="w-12 h-12 rounded-full object-cover border-2 border-blue-400"
+              />
+              <div>
+                <p className="font-semibold text-gray-900 dark:text-white">{userProfile.displayName}</p>
+                <p className="text-xs text-gray-500 dark:text-gray-400 break-all">ID: {userId}</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setIsProfileModalOpen(true)}
+              className="bg-blue-500 hover:bg-blue-600 text-white text-sm py-2 px-4 rounded-lg w-full mb-2 shadow-md transition duration-200 ease-in-out transform hover:scale-105"
+            >
+              Edit Profile
+            </button>
+            <div className="flex justify-between items-center mt-2">
+              <span className="text-sm">Theme:</span>
+              <button
+                onClick={toggleTheme}
+                className="bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 text-sm py-1 px-3 rounded-full transition duration-200 ease-in-out"
+              >
+                {theme === 'light' ? 'Dark Mode' : 'Light Mode'}
+              </button>
+            </div>
+            <div className="flex justify-between items-center mt-2">
+              <span className="text-sm">Network:</span>
+              <button
+                onClick={toggleOfflineStatus}
+                className={`text-sm py-1 px-3 rounded-full transition duration-200 ease-in-out ${isOffline ? 'bg-red-500 text-white' : 'bg-green-500 text-white'}`}
+              >
+                {isOffline ? 'Offline' : 'Online'}
+              </button>
+            </div>
+            {isOffline && (
+              <div className="flex justify-between items-center mt-2">
+                <span className="text-sm">Range:</span>
+                <button
+                  onClick={toggleOutOfRange}
+                  className={`text-sm py-1 px-3 rounded-full transition duration-200 ease-in-out ${isOutOfRange ? 'bg-yellow-500 text-gray-900' : 'bg-blue-500 text-white'}`}
+                >
+                  {isOutOfRange ? 'Out of Range' : 'In Range'}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Main Chat Area */}
+        <div className="flex-1 flex flex-col bg-white dark:bg-gray-800 rounded-xl shadow-2xl m-4">
+          <div className="bg-blue-600 dark:bg-blue-900 text-white p-4 rounded-t-xl shadow-md flex justify-between items-center">
+            <div>
+              <h2 className="text-xl font-bold">{currentRoom ? currentRoom.roomName : 'Select a Room'}</h2>
+              {currentRoom && (
+                <p className="text-sm text-blue-100 dark:text-blue-200">
+                  Room Number: {currentRoom.roomNumber} | Group: {currentRoom.groupName}
+                </p>
+              )}
+            </div>
+            {currentRoom && (
+              <div className="relative" ref={menuRef}>
+                <button
+                  onClick={() => setIsMenuOpen(prev => !prev)}
+                  className="text-white hover:text-blue-100 p-2 rounded-full transition duration-200 ease-in-out"
+                  title="Room Options"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
+                  </svg>
+                </button>
+                {isMenuOpen && (
+                  <div className="absolute right-0 mt-2 w-48 bg-white dark:bg-gray-700 rounded-md shadow-lg z-10 py-1">
+                    <button
+                      onClick={() => {
+                        setIsMembersModalOpen(true);
+                        setIsMenuOpen(false);
+                      }}
+                      className="block w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600"
+                    >
+                      Room Members
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {isOffline && isOutOfRange && (
+            <div className="bg-yellow-100 dark:bg-yellow-900 text-yellow-800 dark:text-yellow-200 p-3 text-center rounded-md mx-4 mt-4 shadow-inner">
+              You are too far to communicate with this user. Move closer to establish a connection.
+            </div>
+          )}
+
+          <div className="flex-1 p-4 overflow-y-auto custom-scrollbar">
+            {messages.length === 0 && !currentRoom && (
+              <p className="text-center text-gray-500 dark:text-gray-400 mt-20">Please select or create a room to start chatting.</p>
+            )}
+            {messages.length === 0 && currentRoom && (
+              <p className="text-center text-gray-500 dark:text-gray-400 mt-20">No messages yet. Be the first to say hello!</p>
+            )}
+            {messages.map((msg) => (
+              <div
+                key={msg.id}
+                className={`flex items-start mb-4 ${msg.senderId === userId ? 'justify-end' : 'justify-start'}`}
+              >
+                {msg.senderId !== userId && (
+                  <img
+                    src={msg.senderProfilePicUrl || `https://placehold.co/40x40/a0aec0/ffffff?text=U`}
+                    alt="Sender Profile"
+                    className="w-10 h-10 rounded-full object-cover mr-3 border-2 border-gray-300 dark:border-gray-600"
+                  />
+                )}
+                <div
+                  className={`p-3 rounded-xl shadow-md max-w-xs sm:max-w-md ${
+                    msg.senderId === userId
+                      ? 'bg-blue-500 text-white rounded-br-none'
+                      : 'bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-white rounded-bl-none'
+                  }`}
+                >
+                  <p className="font-semibold text-sm mb-1">
+                    {msg.senderId === userId ? 'You' : msg.senderDisplayName}
+                  </p>
+                  {msg.type === 'text' && <p className="text-base">{msg.text}</p>}
+                  {msg.type === 'file' && msg.fileUrl && msg.fileName && (
+                    <div className="flex flex-col items-start">
+                      <p className="text-base mb-1">File: <span className="font-medium">{msg.fileName}</span></p>
+                      <a
+                        href={msg.fileUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-200 underline hover:text-blue-100 flex items-center"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1" viewBox="0 0 20 20" fill="currentColor">
+                          <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
+                        </svg>
+                        Download
+                      </a>
+                    </div>
+                  )}
+                  {msg.timestamp && (
+                    <p className="text-xs mt-1 opacity-75">
+                      {new Date(msg.timestamp.toDate()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                  )}
+                </div>
+                {msg.senderId === userId && (
+                  <img
+                    src={msg.senderProfilePicUrl || `https://placehold.co/40x40/a0aec0/ffffff?text=U`}
+                    alt="Your Profile"
+                    className="w-10 h-10 rounded-full object-cover ml-3 border-2 border-blue-400"
+                  />
+                )}
+              </div>
+            ))}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {currentRoom && (
+            <form onSubmit={handleSendMessage} className="p-4 border-t border-gray-200 dark:border-gray-700 flex items-center rounded-b-xl">
+              <input
+                type="text"
+                value={newMessage}
+                onChange={(e) => setNewMessage(e.target.value)}
+                placeholder="Type a message..."
+                className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-full bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-blue-500 focus:border-blue-500 mr-3"
+                disabled={isOffline && isOutOfRange}
+              />
+              {/* Hidden file input */}
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileChange}
+                style={{ display: 'none' }}
+                disabled={isOffline || isOutOfRange} // Disable file input if offline or out of range
+              />
+              <button
+                type="button"
+                onClick={handleFileButtonClick} // Trigger hidden file input
+                className="bg-purple-500 hover:bg-purple-600 text-white p-3 rounded-full shadow-md transition duration-200 ease-in-out mr-2"
+                title="Share File"
+                disabled={isOffline || isOutOfRange} // Disable button if offline or out of range
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828L19 9M10.586 13.414L17 7m-7 7l-2.121 2.121a1 1 0 01-1.414 0l-2.121-2.121a1 1 0 010-1.414l4.242-4.242m2.828 2.828l-4.242 4.242" />
+                </svg>
+              </button>
+              <button
+                type="submit"
+                className="bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-full shadow-md transition duration-200 ease-in-out transform hover:scale-105"
+                disabled={isOffline && isOutOfRange}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                </svg>
+              </button>
+            </form>
+          )}
+        </div>
+      </div>
+
+      {/* Modals */}
+      <RoomModal
+        isOpen={isRoomModalOpen}
+        onClose={() => setIsRoomModalOpen(false)}
+        onCreateJoin={handleCreateJoinRoom}
+      />
+      <ProfileEditModal
+        isOpen={isProfileModalOpen}
+        onClose={() => setIsProfileModalOpen(false)}
+        currentProfile={userProfile}
+        onUpdate={handleUpdateProfile}
+      />
+      <RoomMembersModal
+        isOpen={isMembersModalOpen}
+        onClose={() => setIsMembersModalOpen(false)}
+        members={roomMembers}
+      />
+      <FileUploadProgressModal
+        isOpen={isFileUploadModalOpen}
+        onClose={() => setIsFileUploadModalOpen(false)}
+        progress={uploadProgress}
+        fileName={uploadFileName}
+        error={uploadError}
+      />
+    </div>
+  );
+};
+
+// Room Creation/Joining Modal
+const RoomModal = ({ isOpen, onClose, onCreateJoin }) => {
+  const [roomNumber, setRoomNumber] = useState('');
+  const [roomName, setRoomName] = useState('');
+  const [roomPassword, setRoomPassword] = useState('');
+  const [groupName, setGroupName] = useState('');
+  const [error, setError] = useState('');
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!roomNumber.trim() || !roomName.trim() || !roomPassword.trim() || !groupName.trim()) {
+      setError("All fields are mandatory.");
+      return;
+    }
+    setError('');
+    onCreateJoin({ roomNumber, roomName, roomPassword, groupName });
+    setRoomNumber('');
+    setRoomName('');
+    setRoomPassword('');
+    setGroupName('');
+  };
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title="Create or Join Room">
+      {error && <p className="text-red-500 mb-4">{error}</p>}
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label htmlFor="roomNumber" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Room Number</label>
+          <input
+            type="text"
+            id="roomNumber"
+            value={roomNumber}
+            onChange={(e) => setRoomNumber(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-blue-500 focus:border-blue-500"
+            placeholder="e.g., 12345"
+          />
+        </div>
+        <div>
+          <label htmlFor="roomName" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Room Name</label>
+          <input
+            type="text"
+            id="roomName"
+            value={roomName}
+            onChange={(e) => setRoomName(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-blue-500 focus:border-blue-500"
+            placeholder="e.g., Team Alpha Chat"
+          />
+        </div>
+        <div>
+          <label htmlFor="roomPassword" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Room Password</label>
+          <input
+            type="password"
+            id="roomPassword"
+            value={roomPassword}
+            onChange={(e) => setRoomPassword(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-blue-500 focus:border-blue-500"
+            placeholder="Password"
+          />
+        </div>
+        <div>
+          <label htmlFor="groupName" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Group/Company/Institution Name</label>
+          <input
+            type="text"
+            id="groupName"
+            value={groupName}
+            onChange={(e) => setGroupName(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-blue-500 focus:border-blue-500"
+            placeholder="e.g., Circle Inc."
+          />
+        </div>
+        <button
+          type="submit"
+          className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-200 ease-in-out transform hover:scale-105"
+        >
+          Proceed
+        </button>
+      </form>
+    </Modal>
+  );
+};
+
+// Profile Edit Modal
+const ProfileEditModal = ({ isOpen, onClose, currentProfile, onUpdate }) => {
+  const [displayName, setDisplayName] = useState(currentProfile?.displayName || '');
+  const [profilePicUrl, setProfilePicUrl] = useState(currentProfile?.profilePicUrl || '');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (currentProfile) {
+      setDisplayName(currentProfile.displayName || '');
+      setProfilePicUrl(currentProfile.profilePicUrl || '');
+    }
+  }, [currentProfile]);
+
+  const handleProfilePicChange = async (e) => { // Made async
+    const file = e.target.files[0];
+    if (file) {
+      // Resize and compress the image before setting it
+      const resizedBase64 = await resizeImage(file, 128, 128, 0.7); // Target 128x128, 70% quality
+      if (resizedBase64) {
+        setProfilePicUrl(resizedBase64);
+      } else {
+        setError("Failed to process image. Please try another file.");
+      }
+    }
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!displayName.trim() || !profilePicUrl) {
+      setError("Display Name and Profile Picture are mandatory.");
+      return;
+    }
+    setError('');
+    onUpdate({ displayName: displayName.trim(), profilePicUrl });
+  };
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title="Edit Profile">
+      {error && <p className="text-red-500 mb-4">{error}</p>}
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="flex flex-col items-center justify-center mb-4">
+          <img
+            src={profilePicUrl || `https://placehold.co/128x128/a0aec0/ffffff?text=Upload`}
+            alt="Profile Preview"
+            className="w-24 h-24 rounded-full object-cover border-4 border-blue-400 dark:border-blue-600 shadow-md"
+          />
+          <input
+            type="file"
+            id="editProfilePic"
+            accept="image/*"
+            onChange={handleProfilePicChange}
+            className="mt-4 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
+          />
+        </div>
+        <div>
+          <label htmlFor="editDisplayName" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Display Name</label>
+          <input
+            type="text"
+            id="editDisplayName"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-blue-500 focus:border-blue-500"
+            placeholder="Your display name"
+          />
+        </div>
+        <button
+          type="submit"
+          className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-200 ease-in-out transform hover:scale-105"
+        >
+          Save Changes
+        </button>
+      </form>
+    </Modal>
+  );
+};
+
+
+// --- Main App Component ---
+function AppContent() { // Renamed to AppContent to be wrapped by providers
+  const [agreedToTerms, setAgreedToTerms] = useState(false);
+  const [profileComplete, setProfileComplete] = useState(false);
+  const { userId, isAuthReady, db } = useContext(FirebaseContext);
+
+  const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+
+  // Check agreement status and profile completion from Firestore
+  useEffect(() => {
+    const checkUserStatus = async () => {
+      if (!isAuthReady || !userId || !db) return;
+
+      try {
+        const userDocRef = doc(db, `artifacts/${appId}/users/${userId}/profiles`, userId);
+        const docSnap = await getDoc(userDocRef);
+        if (docSnap.exists()) {
+          const userData = docSnap.data();
+          if (userData.agreedToTerms) {
+            setAgreedToTerms(true);
+          }
+          if (userData.displayName && userData.profilePicUrl) {
+            setProfileComplete(true);
+          }
+        }
+      } catch (error) {
+        console.error("Error checking user status:", error);
+      }
+    };
+
+    checkUserStatus();
+  }, [userId, isAuthReady, db, appId]);
+
+  const handleAgree = async () => {
+    if (!db || !userId) {
+      console.error("Firebase not ready for agreement.");
+      return;
+    }
+    try {
+      const userDocRef = doc(db, `artifacts/${appId}/users/${userId}/profiles`, userId);
+      await setDoc(userDocRef, { agreedToTerms: true }, { merge: true });
+      setAgreedToTerms(true);
+    } catch (error) {
+      console.error("Error saving agreement:", error);
+    }
+  };
+
+  const handleProfileComplete = useCallback(() => {
+    setProfileComplete(true);
+  }, []);
+
+  let content;
+  if (!isAuthReady) {
+    content = (
+      <div className="flex items-center justify-center min-h-screen bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-white">
+        <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-blue-500"></div>
+        <p className="ml-4 text-lg">Initializing app...</p>
+      </div>
+    );
+  } else if (!agreedToTerms) {
+    content = <WelcomeScreen onAgree={handleAgree} />;
+  } else if (!profileComplete) {
+    content = <AuthProfileSetup onProfileComplete={handleProfileComplete} />;
+  } else {
+    content = <MainApp />;
+  }
+
+  return content; // Return the content directly
+}
+
+export default function App() {
+  return (
+    <ThemeProvider>
+      <FirebaseProvider>
+        <AppContent /> {/* Render AppContent inside providers */}
+      </FirebaseProvider>
+    </ThemeProvider>
+  );
+}
+
+// Ensure Tailwind CSS is loaded
+// This script should ideally be in the HTML head, but included here for completeness
+// <script src="https://cdn.tailwindcss.com"></script>
